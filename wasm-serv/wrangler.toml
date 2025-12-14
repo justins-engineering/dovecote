@@ -1,0 +1,31 @@
+name = "thingspace-sdk"
+compatibility_date = "2025-12-14"
+send_metrics = false
+# upload_source_maps = true
+main = "build/worker/shim.mjs"
+
+[assets]
+directory = "../dioxus/target/dx/web-client/release/web/public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/browser/*", "/vzw*", "/connect*"]
+
+[build]
+command = "( cd ../dioxus && ./build.sh ) && cargo install -q worker-build && worker-build --release"
+watch_dir = ["./src"]
+
+[observability.logs]
+enabled = true
+
+[[kv_namespaces]]
+binding = "THINGSPACE"
+id = "c009b0bea73e44db9aec38e114496717"
+
+[durable_objects]
+bindings = [
+  { name = "PIGEON", class_name = "Pigeon" }, # the `class_name` uses the Rust struct identifier name
+]
+
+[[migrations]]
+tag = "v1"                      # Should be unique for each entry
+new_sqlite_classes = ["Pigeon"] # Array of new classes

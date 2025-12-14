@@ -1,0 +1,23 @@
+[build]
+target = "wasm32-unknown-unknown"
+rustflags = [
+  "-Cdebuginfo=0",
+  "-Cstrip=symbols",
+  "-Cllvm-args=--inline-threshold=300",
+  # "-Clink-args=-Wl,-S",
+]
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+incremental = false
+
+
+# 674.85 KiB / gzip: 227.68 KiB
+# 672.46 KiB / gzip: 229.95 KiB
+# 676.43 KiB / gzip: 231.89 KiB
+# 687.61 KiB / gzip: 234.44 KiB
