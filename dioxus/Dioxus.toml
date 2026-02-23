@@ -6,12 +6,8 @@ icon = ["assets/images/favicon.ico"]
 [web]
 pre_compress = false
 
-# [web.wasm_opt]
-# level = "z"
-# debug = false
-
 [web.app]
-title = "Thingspace SDK"
+title = "Pigiot"
 
 [web.watcher]
 index_on_404 = true

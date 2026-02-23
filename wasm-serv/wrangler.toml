@@ -1,11 +1,15 @@
-name = "thingspace-sdk"
+name = "dovecot"
 compatibility_date = "2026-02-23"
 send_metrics = false
 # upload_source_maps = true
 main = "build/worker/shim.mjs"
 
+[[routes]]
+pattern = "dashboard.pigiot.net"
+custom_domain = true
+
 [assets]
-directory = "../dioxus/target/dx/web-client/release/web/public"
+directory = "../dioxus/target/dx/dovecot/release/web/public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*", "/vzw*", "/connect*"]
@@ -18,8 +22,8 @@ watch_dir = ["./src"]
 enabled = true
 
 [[kv_namespaces]]
-binding = "THINGSPACE"
-id = "c009b0bea73e44db9aec38e114496717"
+binding = "DOVECOT_KV"
+id = "f8bb91ce439f4d57924cf9ed794a5b2a"
 
 [durable_objects]
 # the `class_name` uses the Rust struct identifier name
@@ -29,5 +33,5 @@ bindings = [
 ]
 
 [[migrations]]
-tag = "v2"                                      # Should be unique for each entry
+tag = "v1"                                      # Should be unique for each entry
 new_sqlite_classes = ["Pigeon", "NiddMessages"] # Array of new classes

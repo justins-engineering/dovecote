@@ -8,7 +8,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-thingspace-sdk = { git = "https://github.com/justins-engineering/thingspace-sdk-rust.git", branch = "no-app", default-features = false, features = [
+thingspace-sdk = { git = "https://github.com/justins-engineering/thingspace-sdk-rust.git", default-features = false, features = [
   "worker",
 ] }
 serde = { version = "1", features = ["derive"] }

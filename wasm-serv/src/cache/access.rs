@@ -4,7 +4,7 @@ use thingspace_sdk::api::{get_access_token, get_session_token};
 use thingspace_sdk::models::{LoginResponse, Session, SessionRequestBody};
 
 pub async fn access_token(env: &Env) -> worker::Result<String> {
-  let kv = env.kv("THINGSPACE")?;
+  let kv = env.kv("DOVECOT_KV")?;
   let access = kv.get("access_token").text().await?;
 
   match access {
@@ -48,7 +48,7 @@ pub async fn access_token(env: &Env) -> worker::Result<String> {
 }
 
 pub async fn session_token(env: &Env) -> worker::Result<String> {
-  let kv = env.kv("THINGSPACE")?;
+  let kv = env.kv("DOVECOT_KV")?;
   let sesssion = kv.get("session_token").text().await?;
 
   match sesssion {
