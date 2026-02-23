@@ -1,17 +1,17 @@
-use worker::{RouteContext, Secret, console_debug, console_error};
+use worker::{Env, Secret, console_debug, console_error};
 
 use thingspace_sdk::api::{get_access_token, get_session_token};
 use thingspace_sdk::models::{LoginResponse, Session, SessionRequestBody};
 
-pub async fn access_token(ctx: &RouteContext<()>) -> worker::Result<String> {
-  let kv = ctx.kv("THINGSPACE")?;
+pub async fn access_token(env: &Env) -> worker::Result<String> {
+  let kv = env.kv("THINGSPACE")?;
   let access = kv.get("access_token").text().await?;
 
   match access {
     None => {
       console_debug!("No access_token cached");
-      let public_key: Secret = ctx.var("PUBLIC_KEY")?;
-      let private_key = ctx.var("PRIVATE_KEY")?;
+      let public_key: Secret = env.var("PUBLIC_KEY")?;
+      let private_key = env.var("PRIVATE_KEY")?;
 
       let vz_req: Result<worker::Response, thingspace_sdk::models::Error> =
         get_access_token(&public_key.to_string(), &private_key.to_string()).await;
@@ -47,8 +47,8 @@ pub async fn access_token(ctx: &RouteContext<()>) -> worker::Result<String> {
   }
 }
 
-pub async fn session_token(ctx: &RouteContext<()>) -> worker::Result<String> {
-  let kv = ctx.kv("THINGSPACE")?;
+pub async fn session_token(env: &Env) -> worker::Result<String> {
+  let kv = env.kv("THINGSPACE")?;
   let sesssion = kv.get("session_token").text().await?;
 
   match sesssion {
@@ -57,8 +57,8 @@ pub async fn session_token(ctx: &RouteContext<()>) -> worker::Result<String> {
       let key = kv.get("access_token").text().await?;
       match key {
         Some(access_token) => {
-          let username: Secret = ctx.var("USERNAME")?;
-          let password = ctx.var("PASSWORD")?;
+          let username: Secret = env.var("USERNAME")?;
+          let password = env.var("PASSWORD")?;
 
           let cred: SessionRequestBody = SessionRequestBody {
             username: username.to_string(),

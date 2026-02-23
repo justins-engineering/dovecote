@@ -8,3 +8,6 @@ pub use devices::list_devices;
 
 mod nidd;
 pub use nidd::send_nidd_msg;
+
+mod authorize;
+pub use authorize::authenticate_browser;

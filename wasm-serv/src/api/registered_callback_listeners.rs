@@ -7,8 +7,8 @@ use worker::{Request, Response, RouteContext, console_error};
 
 pub async fn list_listeners(_req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
   let aname = ctx.var("ACCOUNT_NAME")?;
-  let atoken = cache::access_token(&ctx).await?;
-  let stoken = cache::session_token(&ctx).await?;
+  let atoken = cache::access_token(&ctx.env).await?;
+  let stoken = cache::session_token(&ctx.env).await?;
 
   let vz_req = list_callback_listeners(&aname.to_string(), &atoken, &stoken).await;
 
@@ -45,8 +45,8 @@ pub async fn create_listeners(mut req: Request, ctx: RouteContext<()>) -> worker
     }
 
     let aname = ctx.var("ACCOUNT_NAME")?;
-    let atoken = cache::access_token(&ctx).await?;
-    let stoken = cache::session_token(&ctx).await?;
+    let atoken = cache::access_token(&ctx.env).await?;
+    let stoken = cache::session_token(&ctx.env).await?;
 
     let vz_req = register_callback_listener(&aname.to_string(), &atoken, &stoken, &cbl).await;
 
@@ -65,8 +65,8 @@ pub async fn create_listeners(mut req: Request, ctx: RouteContext<()>) -> worker
 pub async fn delete_listeners(_req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
   if let Some(sname) = ctx.param("name") {
     let aname = ctx.var("ACCOUNT_NAME")?;
-    let atoken = cache::access_token(&ctx).await?;
-    let stoken = cache::session_token(&ctx).await?;
+    let atoken = cache::access_token(&ctx.env).await?;
+    let stoken = cache::session_token(&ctx.env).await?;
 
     let vz_req = deregister_callback_listener(&aname.to_string(), &atoken, &stoken, sname).await;
 

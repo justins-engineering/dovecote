@@ -7,56 +7,19 @@ use worker::{
 
 #[durable_object]
 pub struct Pigeon {
-  // messages: Vec<NiddCallback>,
   sql: SqlStorage,
-  // state: State,
-  // env: Env, // access `Env` across requests, use inside `fetch`
+  #[allow(unused)]
+  state: State,
+  #[allow(unused)]
+  env: Env, // access `Env` across requests, use inside `fetch`
 }
 
 // NiddCallback { request_id: "8782ed77-824c-4c4d-9118-104a97f74ebd", device_ids: [DeviceID { id: "350457799502610", kind: "IMEI" }], nidd_response: NiddMTDeliveryResponse { account_name: "0742644905-00001", acknowledge_time: None, first_attempt_delivery_time: None, reason: Some("Buffered, device not reachable"), device_ids: [DeviceID { id: "350457799502610", kind: "IMEI" }, DeviceID { id: "4062914013", kind: "MDN" }, DeviceID { id: "14062914013", kind: "MSISDN" }, DeviceID { id: "89148000008531108276", kind: "ICCID" }] }, status: Some("Queued"), callback_count: 1, max_callback_threshold: 2 }
 // NiddCallback { request_id: "8ef55029-871c-4f7c-8c50-9d32d7e77d67", device_ids: [DeviceID { id: "89148000008531108276", kind: "ICCID" }], nidd_response: NiddMONotificationResponse { account_name: "0742644905-00001", message: "SGVsbG8sIFdvcmxkIQ\\u003d\\u003d", device_ids: [DeviceID { id: "350457799502610", kind: "IMEI" }, DeviceID { id: "311270028205048", kind: "IMSI" }, DeviceID { id: "4062914013", kind: "MDN" }, DeviceID { id: "4062912483", kind: "MIN" }, DeviceID { id: "14062914013", kind: "MSISDN" }, DeviceID { id: "89148000008531108276", kind: "ICCID" }] }, status: None, callback_count: 1, max_callback_threshold: 2 }
 // NiddCallback { request_id: "35885d8e-6606-4d1e-b9f2-e74806b11b88", device_ids: [DeviceID { id: "350457799502610", kind: "IMEI" }], nidd_response: NiddMTDeliveryResponse { account_name: "0742644905-00001", acknowledge_time: Some(DateTime { date: YMD { year: 2025, month: 12, day: 11 }, time: Time { hour: 17, minute: 28, second: 53, millisecond: 108, tz_offset_hours: 0, tz_offset_minutes: 0 } }), first_attempt_delivery_time: None, reason: None, device_ids: [DeviceID { id: "350457799502610", kind: "IMEI" }, DeviceID { id: "4062914013", kind: "MDN" }, DeviceID { id: "14062914013", kind: "MSISDN" }, DeviceID { id: "89148000008531108276", kind: "ICCID" }] }, status: Some("Delivered"), callback_count: 1, max_callback_threshold: 2 }
 
-// pub struct Device {
-//   // primary id
-//   pub imei: u64,
-//   pub mdn: String,
-//   pub imsi: String,
-//   pub iccid: String,
-//   pub msisdn: String,
-//   pub min: String,
-//   /// Array of device group names (should only contain 1 String, the default group name)
-//   pub group_names: [String; 1],
-//   pub nidd_mo_messages: Vec<NiddMONotificationResponse>,
-//   pub nidd_mt_responses: Vec<NiddMTDeliveryResponse>,
-// }
-
-// pub struct NiddMONotificationResponse {
-//   request_id: String,
-//   /// Base64-encoded binary message.
-//   message: String,
-// }
-
-// pub struct NiddMTDeliveryResponse {
-//   /// Identifies the absolute time at which the device receiving data is acknowledged
-//   /// by Network (SCEF). The format should be aligned with RFC3339,
-//   /// example: "2017-12-19T16:39:57-08:00" (in UTC passed as a String).
-//   acknowledge_time: Option<DateTime>,
-//   /// Identifies the absolute time at which the data send is attempted to the device
-//   /// for the first time, as device becomes reachable.
-//   first_attempt_delivery_time: Option<DateTime>,
-//   /// This displays only if the status is Failed. Valid values include:
-//   /// Buffered, device not reachable
-//   /// Timeout, could not deliver data
-//   /// Unknown
-//   /// NIDD MT payload exceeds the defined limit
-//   reason: Option<String>,
-//   /// Valid values include: Delivered, Queued, DeliveryFailed
-//   status: String,
-// }
-
 impl DurableObject for Pigeon {
-  fn new(state: State, _env: Env) -> Pigeon {
+  fn new(state: State, env: Env) -> Pigeon {
     let sql = state.storage().sql();
     sql
       .exec(
@@ -99,49 +62,15 @@ impl DurableObject for Pigeon {
       )
       .expect("create table");
 
-    Pigeon {
-      // messages: vec![],
-      sql,
-      // state,
-      // env,
-    }
+    Pigeon { sql, state, env }
   }
-
-  // async fn fetch(&self, mut req: Request) -> Result<Response> {
-  //   // do some work when a worker makes a request to this DO
-  //   // Response::ok(format!("{} messages.", self.messages.len()))
-
-  //   let body = req.json::<NiddCallback>().await;
-
-  //   match body {
-  //     Ok(b) => {
-  //       // self.messages.push(b);
-  //       console_log!("{b:?}");
-  //       // worker::console_log!("{:?}", b.nidd_response);
-  //     }
-  //     Err(e) => {
-  //       console_error!("{e}");
-  //       console_debug!("{:?}", req.text().await);
-  //     }
-  //   }
-  //   Response::empty()
-  // }
 
   async fn fetch(&self, mut req: Request) -> Result<Response> {
     let body = req.json::<NiddCallback>().await;
 
     match body {
       Ok(b) => {
-        // self.messages.push(b);
         console_log!("{b:?}");
-        // worker::console_log!("{:?}", b.nidd_response);
-
-        // let mut imei: i64 = 0;
-        // let mut imsi = String::with_capacity(15);
-        // let mut mdn = String::with_capacity(10);
-        // let mut min = String::with_capacity(10);
-        // let mut msisdn = String::with_capacity(11);
-        // let mut iccid = String::with_capacity(20);
 
         match b.nidd_response {
           NiddResponse::NiddMONotificationResponse {
@@ -149,32 +78,6 @@ impl DurableObject for Pigeon {
             message,
             device_ids,
           } => {
-            // for did in device_ids.iter() {
-            //   match did.kind.as_str() {
-            //     "IMEI" => imei = did.id.parse().unwrap_throw(),
-            //     "IMSI" => imsi = did.id.to_owned(),
-            //     "MDN" => mdn = did.id.to_owned(),
-            //     "MIN" => min = did.id.to_owned(),
-            //     "MSISDN" => msisdn = did.id.to_owned(),
-            //     "ICCID" => iccid = did.id.to_owned(),
-            //     _ => continue,
-            //   }
-            // }
-
-            // self.sql.exec(
-            //   "INSERT INTO device (imei, mdn, imsi, iccid, msisdn, min)
-            //   VALUES (?, ?, ?, ?, ?, ?)
-            //   ON CONFLICT(imei) DO NOTHING;",
-            //   vec![
-            //     imei.into(),
-            //     mdn.into(),
-            //     imsi.into(),
-            //     iccid.into(),
-            //     msisdn.into(),
-            //     min.into(),
-            //   ],
-            // )?;
-
             let imei = insert_device_row(self, &device_ids)?;
 
             self.sql.exec(
@@ -211,11 +114,6 @@ impl DurableObject for Pigeon {
     }
     Response::empty()
   }
-
-  // async fn alarm(&self) -> Result<Response> {
-  //   console_error!("alarm() handler not implemented");
-  //   std::unimplemented!("alarm() handler")
-  // }
 
   // async fn websocket_message(
   //   &self,

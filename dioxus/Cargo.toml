@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 wasm-opt = ["--enable-bulk-memory"]
 
 [dependencies]
-thingspace-sdk = { git = "https://github.com/justins-engineering/thingspace-sdk-rust.git", branch = "no-app", default-features = false, features = [
+thingspace-sdk = { git = "https://github.com/justins-engineering/thingspace-sdk-rust.git", default-features = false, features = [
   "worker",
 ] }
 web-sys = { version = "0.3", features = [
@@ -29,7 +29,7 @@ web-sys = { version = "0.3", features = [
 dioxus = { version = "0.7", features = ["router"] }
 serde_json = "1"
 js-sys = { version = "0.3" }
-strum = "0.27"
+strum = "0.28"
 
 # Dependencies for `api`
 # reqwest = { version = "0.12", features = ["json"] }
@@ -50,7 +50,6 @@ gloo-net = { version = "0.6", features = ["websocket"] }
 bytes = { version = "1" }
 thiserror = "2.0"
 anyhow = "1.0"
-# http = "1.4"
 
 [features]
 default = ["web"]

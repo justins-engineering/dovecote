@@ -4,8 +4,8 @@ use thingspace_sdk::models::AccountDeviceListRequest;
 use worker::{Request, Response, RouteContext, console_error};
 
 pub async fn list_devices(_req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
-  let atoken = cache::access_token(&ctx).await?;
-  let stoken = cache::session_token(&ctx).await?;
+  let atoken = cache::access_token(&ctx.env).await?;
+  let stoken = cache::session_token(&ctx.env).await?;
   let aname = ctx.var("ACCOUNT_NAME")?;
 
   let adl = AccountDeviceListRequest {

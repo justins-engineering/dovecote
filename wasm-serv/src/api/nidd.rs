@@ -18,8 +18,8 @@ pub async fn send_nidd_msg(mut req: Request, ctx: RouteContext<()>) -> worker::R
       return Response::error("Request missing 'NiddMessage'", 400);
     };
 
-    let atoken = cache::access_token(&ctx).await?;
-    let stoken = cache::session_token(&ctx).await?;
+    let atoken = cache::access_token(&ctx.env).await?;
+    let stoken = cache::session_token(&ctx.env).await?;
     let aname = ctx.var("ACCOUNT_NAME")?;
 
     msg.account_name = aname.to_string();
