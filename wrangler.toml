@@ -1,0 +1,37 @@
+name = "dovecot"
+compatibility_date = "2026-03-12"
+send_metrics = false
+main = "build/worker/shim.mjs"
+
+[[routes]]
+pattern = "dashboard.pigiot.net"
+custom_domain = true
+zone_name = "pigiot.net"
+
+[assets]
+directory = "./loft/target/dx/loft/release/web/public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/vzw*", "/connect*"]
+
+[build]
+command = "( cd ./loft && ./build.sh ) && cargo install -q worker-build && worker-build --release"
+watch_dir = ["./src"]
+
+[observability.logs]
+enabled = true
+
+[[kv_namespaces]]
+binding = "DOVECOT_KV"
+id = "f8bb91ce439f4d57924cf9ed794a5b2a"
+
+[durable_objects]
+# the `class_name` uses the Rust struct identifier name
+bindings = [
+  { name = "PIGEON", class_name = "Pigeon" },
+  { name = "NIDDMESSAGES", class_name = "NiddMessages" },
+]
+
+[[migrations]]
+tag = "v1"                                      # Should be unique for each entry
+new_sqlite_classes = ["Pigeon", "NiddMessages"] # Array of new classes

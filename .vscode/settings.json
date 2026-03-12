@@ -1,7 +1,6 @@
 {
   "editor.formatOnSave": true,
   "editor.formatOnSaveMode": "modificationsIfAvailable",
-  "cmake.configureOnOpen": false,
   "editor.insertSpaces": true,
   "editor.tabSize": 2,
   "clangd.arguments": [
