@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use thingspace_sdk::models::{CallbackListener, Device};
 use views::{CallbackView, DeviceView, DevicesView, Navbar};
 
-use crate::{
-  api::{device_list, listener_list},
-  // websocket::{Message, WebsocketError},
-};
+// use crate::{
+//   api::{device_list, listener_list},
+//   // websocket::{Message, WebsocketError},
+// };
 
 // use dioxus::logger::tracing::{error, info};
 // use futures::{SinkExt, stream::StreamExt};
@@ -16,8 +16,6 @@ pub mod api;
 // mod encoding;
 mod views;
 // mod websocket;
-
-const MAIN_CSS: Asset = asset!("/assets/styling/main.css");
 
 #[derive(Routable, Clone, PartialEq)]
 enum Route {
@@ -47,10 +45,10 @@ pub fn App() -> Element {
     devices: Signal::new(HashMap::<String, Device>::new()),
   });
 
-  use_resource(move || async move {
-    device_list().await;
-    // listener_list().await;
-  });
+  // use_resource(move || async move {
+  //   device_list().await;
+  //   listener_list().await;
+  // });
 
   // let ws: gloo_net::websocket::futures::WebSocket =
   //   gloo_net::websocket::futures::WebSocket::open("ws://127.0.0.1:8787/connect").unwrap();
@@ -101,8 +99,53 @@ pub fn App() -> Element {
   // });
 
   rsx! {
-    document::Link { rel: "stylesheet", href: MAIN_CSS }
-    document::Link { rel: "icon", href: asset!("/assets/images/favicon.ico") }
+    document::Link { rel: "stylesheet", href: asset!("/assets/styling/main.css") }
+    document::Link {
+      rel: "icon",
+      href: asset!(
+          "/assets/images/favicon.ico", AssetOptions::builder().with_hash_suffix(false)
+      ),
+      sizes: "32x32",
+    }
+    document::Link {
+      rel: "icon",
+      href: asset!(
+          "/assets/images/favicon.ico", AssetOptions::builder().with_hash_suffix(false)
+      ),
+      sizes: "32x32",
+      media: "prefers-color-scheme: light",
+    }
+    document::Link {
+      rel: "icon",
+      href: asset!(
+          "/assets/images/icon-dark.ico", AssetOptions::builder().with_hash_suffix(false)
+      ),
+      sizes: "32x32",
+      media: "prefers-color-scheme: dark",
+    }
+    document::Link {
+      rel: "icon",
+      r#type: "image/svg+xml",
+      href: asset!(
+          "/assets/images/icon-light.svg", AssetOptions::builder().with_hash_suffix(false)
+      ),
+    }
+    document::Link {
+      rel: "icon",
+      r#type: "image/svg+xml",
+      href: asset!(
+          "/assets/images/icon-light.svg", AssetOptions::builder().with_hash_suffix(false)
+      ),
+      media: "prefers-color-scheme: light",
+    }
+    document::Link {
+      rel: "icon",
+      r#type: "image/svg+xml",
+      href: asset!(
+          "/assets/images/icon-dark.svg", AssetOptions::builder().with_hash_suffix(false)
+      ),
+      media: "prefers-color-scheme: dark",
+    }
     Router::<Route> {}
   }
 }
