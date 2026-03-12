@@ -1,21 +1,21 @@
 name = "dovecot"
 compatibility_date = "2026-03-12"
 send_metrics = false
-# upload_source_maps = true
 main = "build/worker/shim.mjs"
 
 [[routes]]
 pattern = "dashboard.pigiot.net"
 custom_domain = true
+zone_name = "pigiot.net"
 
 [assets]
-directory = "../dioxus/target/dx/dovecot/release/web/public"
+directory = "./loft/target/dx/loft/release/web/public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*", "/vzw*", "/connect*"]
 
 [build]
-command = "( cd ../dioxus && ./build.sh ) && cargo install -q worker-build && worker-build --release"
+command = "( cd ./loft && ./build.sh ) && cargo install -q worker-build && worker-build --release"
 watch_dir = ["./src"]
 
 [observability.logs]
