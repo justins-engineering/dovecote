@@ -49,7 +49,7 @@ pub fn App() -> Element {
 
   use_resource(move || async move {
     device_list().await;
-    listener_list().await;
+    // listener_list().await;
   });
 
   // let ws: gloo_net::websocket::futures::WebSocket =

@@ -13,15 +13,11 @@ thingspace-sdk = { git = "https://github.com/justins-engineering/thingspace-sdk-
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_urlencoded = { version = "0.7" }
-web-sys = { version = "0.3", features = [
-  "EventSource",
-  "EventTarget",
-  "Location",
-  "Window",
-] }
 serde_json = "1"
 worker = { version = "0.7" }
-ory-kratos-client-wasm = { version = "0.2" }
+ory-kratos-client-wasm = { git = "https://github.com/justins-engineering/kratos-client-rust.git", default-features = false, features = [
+  "worker",
+] }
 
 const_format = "0.2"
 base64ct = "1"
