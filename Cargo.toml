@@ -1,5 +1,5 @@
 [package]
-name = "wasm-serv"
+name = "dovecote"
 version = "0.1.0"
 authors = ["justin <code@jes.contact>"]
 edition = "2024"
@@ -8,18 +8,9 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-thingspace-sdk = { git = "https://github.com/justins-engineering/thingspace-sdk-rust.git", default-features = false, features = [
-  "worker",
-] }
 serde = { version = "1", features = ["derive"] }
-serde_urlencoded = { version = "0.7" }
 serde_json = "1"
 worker = { version = "0.7" }
 ory-kratos-client-wasm = { git = "https://github.com/justins-engineering/kratos-client-rust.git", default-features = false, features = [
   "worker",
 ] }
-
-const_format = "0.2"
-base64ct = "1"
-serde-wasm-bindgen = { version = "0.6" }
-futures = { version = "0.3", default-features = false }

@@ -1,98 +1,175 @@
-use worker::{Context, Env, Request, Response, Result, Router, event};
+use ory_kratos_client_wasm::apis::{configuration::Configuration, frontend_api::to_session};
+use worker::{Context, Env, Request, Response, Result, Router, console_error, console_log, event};
 
-mod api;
-mod cache;
-mod callback;
-mod pigeon;
+mod objects;
 
 #[event(fetch, respond_with_errors)]
-async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-  match api::authenticate_browser(&req, &env).await {
-    Ok(_session) => {
+async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
+  match authenticate_browser(&req, &env).await {
+    Ok(session) => {
+      if let Err(e) = req.headers().set("X-User-Id", &session.id.clone()) {
+        console_error!("Failed to set X-User-Id header, Error: {e}");
+        return Response::error("Internal Server Error", 500);
+      }
+
       Router::new()
-        .get_async("/api/callback_listener", api::list_listeners)
-        .post_async("/api/callback_listener", api::create_listeners)
-        .delete_async("/api/callback_listener/:name", api::delete_listeners)
-        .post_async("/api/device", api::list_devices)
-        .post_async("/api/send_nidd", api::send_nidd_msg)
-        .or_else_any_method_async("/api", log_request)
+        // Flocks endpoints - all route to user's Flocks DO
+        .on_async("/flocks", |req, ctx| async move {
+          match validate_crud_request(req.clone()?).await {
+            Ok(user_id) => {
+              let namespace = ctx.durable_object("FLOCKS")?;
+              let stub = namespace.id_from_name(&user_id)?.get_stub()?;
+              match stub.fetch_with_request(req).await {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                  console_error!("{e}");
+                  Response::error(e.to_string(), 500)
+                }
+              }
+            }
+            Err(err) => err,
+          }
+        })
+        // Pigeons endpoints - all route to user's Pigeons DO
+        .on_async("/pigeons", |req, ctx| async move {
+          match validate_crud_request(req.clone()?).await {
+            Ok(user_id) => {
+              let namespace = ctx.durable_object("PIGEONS")?;
+              let stub = namespace.id_from_name(&user_id)?.get_stub()?;
+              match stub.fetch_with_request(req).await {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                  console_error!("{e}");
+                  Response::error(e.to_string(), 500)
+                }
+              }
+            }
+            Err(err) => err,
+          }
+        })
+        // Pigeon messages - route to specific Pigeon DO
+        .on_async("/pigeon/:pigeon_id/messages", |req, ctx| async move {
+          match validate_crud_request(req.clone()?).await {
+            Ok(_user_id) => {
+              let Some(pigeon_id) = ctx.param("pigeon_id") else {
+                return Response::error("Bad Request", 400);
+              };
+
+              let namespace = ctx.durable_object("PIGEONS")?;
+              let stub = namespace.id_from_name(pigeon_id)?.get_stub()?;
+              match stub.fetch_with_request(req).await {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                  console_error!("{e}");
+                  Response::error(e.to_string(), 500)
+                }
+              }
+            }
+            Err(err) => err,
+          }
+        })
+        .on_async(
+          "/pigeon/:pigeon_id/messages/:message_id",
+          |req, ctx| async move {
+            match validate_crud_request(req.clone()?).await {
+              Ok(_user_id) => {
+                let Some(pigeon_id) = ctx.param("pigeon_id") else {
+                  return Response::error("Bad Request", 400);
+                };
+                let namespace = ctx.durable_object("PIGEONS")?;
+                let stub = namespace.id_from_name(pigeon_id)?.get_stub()?;
+                match stub.fetch_with_request(req).await {
+                  Ok(r) => Ok(r),
+                  Err(e) => {
+                    console_error!("{e}");
+                    Response::error(e.to_string(), 500)
+                  }
+                }
+              }
+              Err(err) => err,
+            }
+          },
+        )
+        .or_else_any_method_async("/", |mut req, _ctx| async move {
+          match req.text().await {
+            Ok(b) => console_log!("{b}"),
+            Err(e) => console_error!("{e}"),
+          }
+          Response::error("Not Found", 404)
+        })
         .run(req, env)
         .await
     }
     Err(_) => {
-      Router::new()
-        .post_async("/vzw/nidd", callback::receive_nidd_msg)
-        .post_async("/vzw/update_tables", callback::update_tables)
-        .get_async("/vzw/update_tables", callback::update_tables)
-        .get_async("/connect", websocket)
-        .or_else_any_method_async("/vzw", log_request)
-        .run(req, env)
-        .await
-    }
-  }
-}
-
-// #[event(fetch, respond_with_errors)]
-// async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-//   Router::new()
-//     .get_async("/api/callback_listener", api::list_listeners)
-//     .post_async("/api/callback_listener", api::create_listeners)
-//     .delete_async("/api/callback_listener/:name", api::delete_listeners)
-//     .post_async("/api/device", api::list_devices)
-//     .post_async("/api/send_nidd", api::send_nidd_msg)
-//     .or_else_any_method_async("/api", log_request)
-//     .post_async("/vzw/nidd", callback::receive_nidd_msg)
-//     .post_async("/vzw/update_tables", callback::update_tables)
-//     .get_async("/vzw/update_tables", callback::update_tables)
-//     .get_async("/connect", websocket)
-//     .or_else_any_method_async("/vzw", log_request)
-//     .run(req, env)
-//     .await
-// }
-
-pub async fn log_request(
-  mut req: Request,
-  _ctx: worker::RouteContext<()>,
-) -> worker::Result<Response> {
-  let body = req.text().await;
-
-  match body {
-    Ok(b) => worker::console_log!("{b}"),
-    Err(e) => worker::console_error!("{e}"),
-  }
-
-  // Response::error("Unauthorized", 401)
-  Response::empty()
-}
-
-use futures::StreamExt;
-
-pub async fn websocket(req: Request, _ctx: worker::RouteContext<()>) -> worker::Result<Response> {
-  if let Ok(Some(upgrade_header)) = req.headers().get("Upgrade")
-    && upgrade_header != "websocket"
-  {
-    return worker::Response::error("Expected Upgrade: websocket", 426);
-  }
-
-  let ws = worker::WebSocketPair::new()?;
-  let client = ws.client;
-  let server = ws.server;
-  server.accept()?;
-  let _ = server.send_with_bytes("Hello from server");
-
-  worker::wasm_bindgen_futures::spawn_local(async move {
-    let mut event_stream = server.events().expect("could not open stream");
-
-    while let Some(event) = event_stream.next().await {
-      match event.expect("received error in websocket") {
-        worker::WebsocketEvent::Message(msg) => {
-          worker::console_log!("{:?}", str::from_utf8(&msg.bytes().unwrap()));
-          server.send_with_bytes(msg.bytes().unwrap()).unwrap()
-        }
-        worker::WebsocketEvent::Close(_event) => worker::console_log!("Closed!"),
+      match req.text().await {
+        Ok(b) => console_log!("{b}"),
+        Err(e) => console_error!("{e}"),
       }
+      Response::error("Unauthorized", 401)
     }
-  });
+  }
+}
 
-  worker::Response::from_websocket(client)
+async fn validate_crud_request(req: Request) -> Result<String, worker::Result<Response>> {
+  let ctype = req.headers().get("Content-Type");
+
+  let Ok(ctype) = ctype else {
+    return Err(Response::error("Missing 'Content-Type' header", 400));
+  };
+
+  let Some(ctype) = ctype else {
+    return Err(Response::error("Bad 'Content-Type' header", 400));
+  };
+
+  if ctype != "application/json" {
+    return Err(Response::error(
+      "'Content-Type' must be 'application/json'",
+      400,
+    ));
+  }
+
+  let Ok(Some(user_id)) = req.headers().get("X-User-Id") else {
+    return Err(Response::error("Unauthorized", 401));
+  };
+
+  Ok(user_id)
+}
+
+pub async fn authenticate_browser(
+  req: &Request,
+  env: &Env,
+) -> worker::Result<ory_kratos_client_wasm::models::Session> {
+  let cookie_header = req.headers().get("Cookie")?;
+
+  match cookie_header {
+    None => {
+      console_error!("Request missing Cookie Header");
+      Err("Unauthorized".into())
+    }
+    Some(ch) => {
+      let conf = Configuration {
+        base_path: env.var("KRATOS_BROWSER_URL")?.to_string(),
+        user_agent: None,
+        basic_auth: None,
+        oauth_access_token: None,
+        bearer_access_token: None,
+        api_key: None,
+      };
+
+      match to_session(&conf, None, Some(&ch), None).await {
+        Ok(session) => {
+          if let Some(active) = session.active
+            && active
+          {
+            return Ok(session);
+          }
+        }
+        Err(e) => {
+          console_error!("Error: {e:?}");
+        }
+      }
+
+      Err("Unauthorized".into())
+    }
+  }
 }
