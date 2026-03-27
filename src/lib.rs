@@ -1,12 +1,17 @@
 use ory_kratos_client_wasm::apis::{configuration::Configuration, frontend_api::to_session};
 use worker::{Context, Env, Request, Response, Result, Router, console_error, console_log, event};
 
+pub mod models;
 mod objects;
 
 #[event(fetch, respond_with_errors)]
 async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
   match authenticate_browser(&req, &env).await {
     Ok(session) => {
+      let Ok(req) = req.clone_mut() else {
+        return Response::error("Internal Server Error", 500);
+      };
+
       if let Err(e) = req.headers().set("X-User-Id", &session.id.clone()) {
         console_error!("Failed to set X-User-Id header, Error: {e}");
         return Response::error("Internal Server Error", 500);
@@ -14,7 +19,7 @@ async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
       Router::new()
         // Flocks endpoints - all route to user's Flocks DO
-        .on_async("/flocks", |req, ctx| async move {
+        .on_async("/flocks/:sub_path", |req, ctx| async move {
           match validate_crud_request(req.clone()?).await {
             Ok(user_id) => {
               let namespace = ctx.durable_object("FLOCKS")?;
@@ -31,7 +36,7 @@ async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
           }
         })
         // Pigeons endpoints - all route to user's Pigeons DO
-        .on_async("/pigeons", |req, ctx| async move {
+        .on_async("/pigeons/:sub_path", |req, ctx| async move {
           match validate_crud_request(req.clone()?).await {
             Ok(user_id) => {
               let namespace = ctx.durable_object("PIGEONS")?;

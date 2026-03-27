@@ -9,9 +9,9 @@ static SERVICE_PLAN: &str = "free";
 
 #[derive(Serialize, Deserialize)]
 pub struct Flock {
-  id: Option<i64>,
+  id: String,
   name: String,
-  service_plan: String,
+  service_plan: Option<String>,
   updated_at: Option<i64>,
   created_at: Option<i64>,
 }
@@ -19,9 +19,9 @@ pub struct Flock {
 impl Default for Flock {
   fn default() -> Flock {
     Flock {
-      id: Option::default(),
+      id: String::with_capacity(64),
       name: String::with_capacity(64),
-      service_plan: SERVICE_PLAN.to_string(),
+      service_plan: Some(SERVICE_PLAN.to_string()),
       updated_at: Option::default(),
       created_at: Option::default(),
     }
@@ -106,7 +106,6 @@ impl DurableObject for Flocks {
       "/flocks/read" => read(self, req).await,
       "/flocks/update" => update(self, req).await,
       "/flocks/delete" => delete(self, req).await,
-      "/flock/:id/pigeons" => delete(self, req).await,
       _ => Response::error("Not found", 404),
     }
   }
