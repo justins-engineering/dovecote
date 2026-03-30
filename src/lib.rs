@@ -1,5 +1,7 @@
 use ory_kratos_client_wasm::apis::{configuration::Configuration, frontend_api::to_session};
-use worker::{Context, Env, Request, Response, Result, Router, console_error, console_log, event};
+use worker::{
+  Context, Env, Request, Response, Result, Router, console_error, console_log, console_warn, event,
+};
 
 pub mod models;
 mod objects;
@@ -116,24 +118,28 @@ async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
 }
 
 async fn validate_crud_request(req: Request) -> Result<String, worker::Result<Response>> {
-  let ctype = req.headers().get("Content-Type");
+  // let ctype = req.headers().get("Content-Type");
 
-  let Ok(ctype) = ctype else {
-    return Err(Response::error("Missing 'Content-Type' header", 400));
-  };
+  // let Ok(ctype) = ctype else {
+  //   console_error!("Missing 'Content-Type' header");
+  //   return Err(Response::error("Missing 'Content-Type' header", 400));
+  // };
 
-  let Some(ctype) = ctype else {
-    return Err(Response::error("Bad 'Content-Type' header", 400));
-  };
+  // let Some(ctype) = ctype else {
+  //   console_error!("Bad 'Content-Type' header");
+  //   return Err(Response::error("Bad 'Content-Type' header", 400));
+  // };
 
-  if ctype != "application/json" {
-    return Err(Response::error(
-      "'Content-Type' must be 'application/json'",
-      400,
-    ));
-  }
+  // if ctype != "application/json" {
+  //   console_error!("'Content-Type' must be 'application/json'");
+  //   return Err(Response::error(
+  //     "'Content-Type' must be 'application/json'",
+  //     400,
+  //   ));
+  // }
 
   let Ok(Some(user_id)) = req.headers().get("X-User-Id") else {
+    console_error!("Request missing 'X-User-Id' header");
     return Err(Response::error("Unauthorized", 401));
   };
 
@@ -170,7 +176,7 @@ pub async fn authenticate_browser(
           }
         }
         Err(e) => {
-          console_error!("Error: {e:?}");
+          console_warn!("Error: {e:?}");
         }
       }
 

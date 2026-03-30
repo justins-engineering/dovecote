@@ -1,15 +1,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json;
 use worker::{
-  DurableObject, Env, Request, Response, Result, SqlStorage, State, console_error, durable_object,
-  wasm_bindgen,
+  DurableObject, Env, Request, Response, ResponseBuilder, Result, SqlStorage, State, console_error,
+  durable_object, wasm_bindgen,
 };
 
 static CONNECTOR: &str = "HTTPS";
 
 #[derive(Serialize, Deserialize)]
 pub struct Pigeon {
-  id: String,
+  id: i64,
   name: String,
   serial: Option<String>,
   tags: Option<String>,
@@ -23,7 +23,7 @@ pub struct Pigeon {
 impl Default for Pigeon {
   fn default() -> Pigeon {
     Pigeon {
-      id: String::with_capacity(64),
+      id: i64::default(),
       name: String::with_capacity(64),
       serial: Option::default(),
       tags: Option::default(),
@@ -51,7 +51,7 @@ impl DurableObject for Pigeons {
     sql
       .exec(
         "CREATE TABLE IF NOT EXISTS pigeons (
-          id TEXT NOT NULL PRIMARY KEY,
+          id INTEGER NOT NULL PRIMARY KEY,
           serial TEXT,
           name TEXT,
           tags TEXT,
@@ -62,7 +62,7 @@ impl DurableObject for Pigeons {
           created_at INTEGER DEFAULT (unixepoch())
         );
 
-        CREATE TRIGGER prevent_immutable_updates
+        CREATE TRIGGER IF NOT EXISTS prevent_immutable_updates_on_pigeons
         BEFORE UPDATE OF id, created_at ON pigeons
         WHEN OLD.id IS NOT NEW.id
           OR OLD.created_at IS NOT NEW.created_at
@@ -70,7 +70,7 @@ impl DurableObject for Pigeons {
           SELECT RAISE(ABORT, 'Error: id and created_at columns are immutable.');
         END;
 
-        CREATE TRIGGER set_updated_at
+        CREATE TRIGGER IF NOT EXISTS set_updated_at
         AFTER UPDATE ON pigeons
         FOR EACH ROW
         WHEN NEW.updated_at = OLD.updated_at
@@ -91,7 +91,7 @@ impl DurableObject for Pigeons {
     sql
       .exec(
         "CREATE TABLE IF NOT EXISTS messages (
-          id TEXT NOT NULL PRIMARY KEY,
+          id INTEGER NOT NULL PRIMARY KEY,
           pigeon_id INTEGER NOT NULL,
           message TEXT NOT NULL,
           timestamp INTEGER DEFAULT (unixepoch()),
@@ -126,16 +126,10 @@ async fn read_all(pigeons: &Pigeons, _req: Request) -> Result<Response> {
   let query = pigeons
     .sql
     .exec("SELECT * FROM pigeons;", None)?
-    .to_array::<Vec<Pigeon>>();
+    .to_array::<Pigeon>();
 
   match query {
-    Ok(rows) => match serde_json::to_string(&rows) {
-      Ok(json) => Response::from_json(&json),
-      Err(e) => {
-        console_error!("Pigeon serialize error: {e}");
-        Response::error("Internal Server Error", 500)
-      }
-    },
+    Ok(rows) => Response::from_json(&rows),
     Err(e) => {
       console_error!("Pigeons read error: {e}");
       Response::error("Internal Server Error", 500)
@@ -152,13 +146,7 @@ async fn read(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
         .one::<Pigeon>();
 
       match query {
-        Ok(pigeon) => match serde_json::to_string(&pigeon) {
-          Ok(json) => Response::from_json(&json),
-          Err(e) => {
-            console_error!("Pigeon serialize error: {e}");
-            Response::error("Internal Server Error", 500)
-          }
-        },
+        Ok(pigeon) => Response::from_json(&pigeon),
         Err(e) => {
           console_error!(
             "Pigeons read error: {e}\nRequest body: {:?}",
@@ -178,8 +166,10 @@ async fn read(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
 async fn create(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
   match req.json::<Pigeon>().await {
     Ok(row) => {
-      pigeons.sql.exec(
-        "INSERT INTO pigeons (
+      let query = pigeons
+        .sql
+        .exec(
+          "INSERT INTO pigeons (
             serial,
             name,
             tags,
@@ -188,17 +178,36 @@ async fn create(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
             last_connected
           )
           VALUES (?);",
-        vec![
-          row.serial.into(),
-          row.name.into(),
-          row.tags.into(),
-          row.connector.into(),
-          row.location.into(),
-          row.last_connected.into(),
-        ],
-      )?;
+          vec![
+            row.serial.into(),
+            row.name.into(),
+            row.tags.into(),
+            row.connector.into(),
+            row.location.into(),
+            row.last_connected.into(),
+          ],
+        )?
+        .one::<Pigeon>();
 
-      Response::empty()
+      match query {
+        Ok(pigeon) => {
+          let mut location = String::with_capacity(72);
+          location.push_str("/pigeons/");
+          location.push_str(&pigeon.id.to_string());
+
+          ResponseBuilder::new()
+            .with_status(201)
+            .with_header("Location", &location)?
+            .from_json(&pigeon)
+        }
+        Err(e) => {
+          console_error!(
+            "Pigeons create error: {e}\nRequest body: {:?}",
+            req.text().await?
+          );
+          Response::error("Internal Server Error", 500)
+        }
+      }
     }
     Err(e) => {
       console_error!("Pigeons read error: {e}");
