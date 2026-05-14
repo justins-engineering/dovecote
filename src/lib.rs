@@ -1,186 +1,190 @@
-use ory_kratos_client_wasm::apis::{configuration::Configuration, frontend_api::to_session};
-use worker::{
-  Context, Env, Request, Response, Result, Router, console_error, console_log, console_warn, event,
+use crate::{
+  helpers::{authenticate_browser, create_user_flock, get_hyperdrive_conn, get_user_flocks},
+  models::{Flock, Pigeon},
 };
+use futures::future::join_all;
+use uuid::Uuid;
+use worker::{Context, Env, Request, Response, Router, console_error, console_log, event};
 
+mod helpers;
 pub mod models;
 mod objects;
 
+// macro_rules! unwrap_or_return_response {
+//   ($expr:expr) => {
+//     match $expr {
+//       Ok(val) => val,
+//       Err(err_resp) => return err_resp,
+//     }
+//   };
+// }
+
+/// Validates the Kratos cookie and returns the User ID as a String.
+pub async fn require_auth(req: &Request, env: &Env) -> worker::Result<String> {
+  let session = crate::authenticate_browser(req, env)
+    .await
+    .map_err(|_| worker::Error::RustError("Unauthorized".to_string()))?;
+
+  // Extract the identity ID, failing if it doesn't exist
+  let identity = session
+    .identity
+    .ok_or_else(|| worker::Error::RustError("Session missing identity".to_string()))?;
+
+  Ok(identity.id)
+}
+
+/// Establishes a Hyperdrive connection, spawns the background driver,
+/// and hands back a ready-to-use Client.
+pub async fn get_db_client(env: &Env) -> worker::Result<tokio_postgres::Client> {
+  let (client, connection) = crate::get_hyperdrive_conn(env).await?;
+
+  // Abstract the Wasm background task away from the route handlers!
+  worker::wasm_bindgen_futures::spawn_local(async move {
+    if let Err(e) = connection.await {
+      console_error!("Postgres connection error: {}", e);
+    }
+  });
+
+  Ok(client)
+}
+
+// fn get_flock_id(ctx: &worker::RouteContext<()>) -> Result<i64, worker::Result<Response>> {
+//   let Some(id_str) = ctx.param("flock_id") else {
+//     return Err(Response::error("Missing flock_id", 400));
+//   };
+
+//   let Ok(flock_id) = id_str.parse() else {
+//     return Err(Response::error("Bad flock_id", 400));
+//   };
+
+//   Ok(flock_id)
+// }
+
 #[event(fetch, respond_with_errors)]
-async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
-  match authenticate_browser(&req, &env).await {
-    Ok(session) => {
-      let Ok(req) = req.clone_mut() else {
-        return Response::error("Internal Server Error", 500);
+async fn main(req: Request, env: Env, _ctx: Context) -> worker::Result<Response> {
+  Router::new()
+    .get_async("/flocks", |req, ctx: worker::RouteContext<()>| async move {
+      // 1. Authoritative Identity Check
+      let Ok(user_id) = require_auth(&req, &ctx.env).await else {
+        return Response::error("Unauthorized", 401);
       };
 
-      if let Err(e) = req.headers().set("X-User-Id", &session.id.clone()) {
-        console_error!("Failed to set X-User-Id header, Error: {e}");
-        return Response::error("Internal Server Error", 500);
+      // 2. Establish the Hyperdrive DB Connection
+      let Ok(client) = get_db_client(&ctx.env).await else {
+        return Response::error("DB Error", 500);
+      };
+
+      // 3. Query the Control Plane using our strict helper
+      let mut user_flocks = match get_user_flocks(&client, &user_id).await {
+        Ok(flocks) => flocks,
+        Err(e) => return Err(e),
+      };
+
+      // 4. Connect to the PIGEONS Durable Object Namespace
+      let Ok(pigeon_namespace) = ctx.durable_object("PIGEONS") else {
+        return Response::error("Failed to bind to PIGEONS namespace", 500);
+      };
+
+      // 5. Scatter-Gather the Live Edge State
+      for flock in &mut user_flocks {
+        let flock_uuid = Uuid::parse_str(&flock.id).unwrap();
+
+        // Query Yugabyte for the pigeon IDs in this specific flock
+        let pigeon_rows = client
+          .query_typed(
+            "SELECT id FROM pigeons WHERE flock_id = $1",
+            &[(&flock_uuid, tokio_postgres::types::Type::UUID)],
+          )
+          .await
+          .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+        // We assign the total row count to our strict model's pigeon_count
+        flock.pigeon_count = pigeon_rows.len() as i64;
+
+        let mut fetch_tasks: Vec<
+          std::pin::Pin<Box<dyn std::future::Future<Output = Option<worker::Response>>>>,
+        > = Vec::new();
+
+        for row in pigeon_rows {
+          let namespace_clone = pigeon_namespace.clone();
+          let pigeon_id: Uuid = row.get("id");
+          let pigeon_id_str = pigeon_id.to_string();
+
+          fetch_tasks.push(Box::pin(async move {
+            let Ok(stub) = namespace_clone
+              .id_from_string(&pigeon_id_str)
+              .and_then(|id| id.get_stub())
+            else {
+              return None;
+            };
+
+            // Ask the DO for its live memory state
+            stub
+              .fetch_with_str(&format!("http://internal/pigeons/{}/live", pigeon_id_str))
+              .await
+              .ok()
+          }));
+        }
+
+        // Execute all fetches concurrently
+        let responses = join_all(fetch_tasks).await;
+
+        let mut active_pigeons = 0;
+
+        for mut resp in responses.into_iter().flatten() {
+          if let Ok(state) = resp.json::<serde_json::Value>().await {
+            // Example: Count how many are actively connected to WebSockets
+            if state["status"] == "active" {
+              active_pigeons += 1;
+            }
+          }
+        }
+
+        // In this implementation, I am overwriting pigeon_count with active_pigeons.
+        // If your frontend Dioxus model needs BOTH total_count and active_count,
+        // you must update `src/models/flock.rs` to include a new `active_pigeons: i64` field!
+        flock.pigeon_count = active_pigeons;
       }
 
-      Router::new()
-        // Flocks endpoints - all route to user's Flocks DO
-        .on_async("/flocks/:sub_path", |req, ctx| async move {
-          match validate_crud_request(req.clone()?).await {
-            Ok(user_id) => {
-              let namespace = ctx.durable_object("FLOCKS")?;
-              let stub = namespace.id_from_name(&user_id)?.get_stub()?;
-              match stub.fetch_with_request(req).await {
-                Ok(r) => Ok(r),
-                Err(e) => {
-                  console_error!("{e}");
-                  Response::error(e.to_string(), 500)
-                }
-              }
-            }
-            Err(err) => err,
-          }
-        })
-        // Pigeons endpoints - all route to user's Pigeons DO
-        .on_async("/pigeons/:sub_path", |req, ctx| async move {
-          match validate_crud_request(req.clone()?).await {
-            Ok(user_id) => {
-              let namespace = ctx.durable_object("PIGEONS")?;
-              let stub = namespace.id_from_name(&user_id)?.get_stub()?;
-              match stub.fetch_with_request(req).await {
-                Ok(r) => Ok(r),
-                Err(e) => {
-                  console_error!("{e}");
-                  Response::error(e.to_string(), 500)
-                }
-              }
-            }
-            Err(err) => err,
-          }
-        })
-        // Pigeon messages - route to specific Pigeon DO
-        .on_async("/pigeon/:pigeon_id/messages", |req, ctx| async move {
-          match validate_crud_request(req.clone()?).await {
-            Ok(_user_id) => {
-              let Some(pigeon_id) = ctx.param("pigeon_id") else {
-                return Response::error("Bad Request", 400);
-              };
+      // 6. Return the strongly-typed JSON array
+      Response::from_json(&user_flocks)
+    })
+    .post_async("/flocks", |mut req, ctx| async move {
+      // 1. Authoritative Identity Check
+      let Ok(user_id) = require_auth(&req, &ctx.env).await else {
+        return Response::error("Unauthorized", 401);
+      };
 
-              let namespace = ctx.durable_object("PIGEONS")?;
-              let stub = namespace.id_from_name(pigeon_id)?.get_stub()?;
-              match stub.fetch_with_request(req).await {
-                Ok(r) => Ok(r),
-                Err(e) => {
-                  console_error!("{e}");
-                  Response::error(e.to_string(), 500)
-                }
-              }
-            }
-            Err(err) => err,
-          }
-        })
-        .on_async(
-          "/pigeon/:pigeon_id/messages/:message_id",
-          |req, ctx| async move {
-            match validate_crud_request(req.clone()?).await {
-              Ok(_user_id) => {
-                let Some(pigeon_id) = ctx.param("pigeon_id") else {
-                  return Response::error("Bad Request", 400);
-                };
-                let namespace = ctx.durable_object("PIGEONS")?;
-                let stub = namespace.id_from_name(pigeon_id)?.get_stub()?;
-                match stub.fetch_with_request(req).await {
-                  Ok(r) => Ok(r),
-                  Err(e) => {
-                    console_error!("{e}");
-                    Response::error(e.to_string(), 500)
-                  }
-                }
-              }
-              Err(err) => err,
-            }
-          },
-        )
-        .or_else_any_method_async("/", |mut req, _ctx| async move {
-          match req.text().await {
-            Ok(b) => console_log!("{b}"),
-            Err(e) => console_error!("{e}"),
-          }
-          Response::error("Not Found", 404)
-        })
-        .run(req, env)
-        .await
-    }
-    Err(_) => {
+      // 2. Establish the Hyperdrive DB Connection
+      let Ok(client) = get_db_client(&ctx.env).await else {
+        return Response::error("DB Error", 500);
+      };
+
+      // 3. Parse the incoming JSON body
+      // We expect the frontend to just send `{"name": "My New Flock"}`
+      let Ok(payload) = req.json::<models::CreateFlockPayload>().await else {
+        return Response::error("Invalid JSON payload", 400);
+      };
+
+      // Ensure they didn't just send an empty string
+      if payload.name.trim().is_empty() {
+        return Response::error("Flock name cannot be empty", 400);
+      }
+
+      // 4. Create the flock in the Control Plane
+      match create_user_flock(&client, &user_id, &payload.name).await {
+        // 5. Return the newly created, fully populated Flock object to Dioxus!
+        Ok(flock) => Response::from_json(&flock),
+        Err(e) => Err(e),
+      }
+    })
+    .or_else_any_method_async("/", |mut req, _ctx| async move {
       match req.text().await {
         Ok(b) => console_log!("{b}"),
         Err(e) => console_error!("{e}"),
       }
-      Response::error("Unauthorized", 401)
-    }
-  }
-}
-
-async fn validate_crud_request(req: Request) -> Result<String, worker::Result<Response>> {
-  // let ctype = req.headers().get("Content-Type");
-
-  // let Ok(ctype) = ctype else {
-  //   console_error!("Missing 'Content-Type' header");
-  //   return Err(Response::error("Missing 'Content-Type' header", 400));
-  // };
-
-  // let Some(ctype) = ctype else {
-  //   console_error!("Bad 'Content-Type' header");
-  //   return Err(Response::error("Bad 'Content-Type' header", 400));
-  // };
-
-  // if ctype != "application/json" {
-  //   console_error!("'Content-Type' must be 'application/json'");
-  //   return Err(Response::error(
-  //     "'Content-Type' must be 'application/json'",
-  //     400,
-  //   ));
-  // }
-
-  let Ok(Some(user_id)) = req.headers().get("X-User-Id") else {
-    console_error!("Request missing 'X-User-Id' header");
-    return Err(Response::error("Unauthorized", 401));
-  };
-
-  Ok(user_id)
-}
-
-pub async fn authenticate_browser(
-  req: &Request,
-  env: &Env,
-) -> worker::Result<ory_kratos_client_wasm::models::Session> {
-  let cookie_header = req.headers().get("Cookie")?;
-
-  match cookie_header {
-    None => {
-      console_error!("Request missing Cookie Header");
-      Err("Unauthorized".into())
-    }
-    Some(ch) => {
-      let conf = Configuration {
-        base_path: env.var("KRATOS_BROWSER_URL")?.to_string(),
-        user_agent: None,
-        basic_auth: None,
-        oauth_access_token: None,
-        bearer_access_token: None,
-        api_key: None,
-      };
-
-      match to_session(&conf, None, Some(&ch), None).await {
-        Ok(session) => {
-          if let Some(active) = session.active
-            && active
-          {
-            return Ok(session);
-          }
-        }
-        Err(e) => {
-          console_warn!("Error: {e:?}");
-        }
-      }
-
-      Err("Unauthorized".into())
-    }
-  }
+      Response::error("Not Found", 404)
+    })
+    .run(req, env)
+    .await
 }

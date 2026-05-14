@@ -1,40 +1,8 @@
-use serde::{Deserialize, Serialize};
-use serde_json;
+use crate::models::{Pigeon, PigeonMessage};
 use worker::{
   DurableObject, Env, Request, Response, ResponseBuilder, Result, SqlStorage, State, console_error,
   durable_object, wasm_bindgen,
 };
-
-static CONNECTOR: &str = "HTTPS";
-
-#[derive(Serialize, Deserialize)]
-pub struct Pigeon {
-  id: i64,
-  name: String,
-  serial: Option<String>,
-  tags: Option<String>,
-  connector: Option<String>,
-  location: Option<String>,
-  last_connected: Option<i64>,
-  updated_at: Option<i64>,
-  created_at: Option<i64>,
-}
-
-impl Default for Pigeon {
-  fn default() -> Pigeon {
-    Pigeon {
-      id: i64::default(),
-      name: String::with_capacity(64),
-      serial: Option::default(),
-      tags: Option::default(),
-      connector: Some(CONNECTOR.to_string()),
-      location: Option::default(),
-      last_connected: Option::default(),
-      updated_at: Option::default(),
-      created_at: Option::default(),
-    }
-  }
-}
 
 #[durable_object]
 pub struct Pigeons {
@@ -52,6 +20,7 @@ impl DurableObject for Pigeons {
       .exec(
         "CREATE TABLE IF NOT EXISTS pigeons (
           id INTEGER NOT NULL PRIMARY KEY,
+          flock_id INTEGER NOT NULL,
           serial TEXT,
           name TEXT,
           tags TEXT,
@@ -80,6 +49,7 @@ impl DurableObject for Pigeons {
           WHERE id = OLD.id;
         END;
 
+        CREATE INDEX IF NOT EXISTS idx_pigeons_flock_id ON pigeons(flock_id);
         CREATE INDEX IF NOT EXISTS idx_pigeons_serial ON pigeons(serial);
         CREATE INDEX IF NOT EXISTS idx_pigeons_name ON pigeons(name);
         CREATE INDEX IF NOT EXISTS idx_pigeons_tags ON pigeons(tags);
@@ -90,7 +60,7 @@ impl DurableObject for Pigeons {
 
     sql
       .exec(
-        "CREATE TABLE IF NOT EXISTS messages (
+        "CREATE TABLE IF NOT EXISTS pigeon_messages (
           id INTEGER NOT NULL PRIMARY KEY,
           pigeon_id INTEGER NOT NULL,
           message TEXT NOT NULL,
@@ -98,51 +68,76 @@ impl DurableObject for Pigeons {
           FOREIGN KEY (pigeon_id) REFERENCES pigeons(id) ON DELETE CASCADE
         );
 
-        CREATE INDEX IF NOT EXISTS idx_messages_pigeon_id ON messages(pigeon_id);
-        CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
-        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(message);",
+        CREATE INDEX IF NOT EXISTS idx_pigeon_messages_pigeon_id ON pigeon_messages(pigeon_id);
+        CREATE INDEX IF NOT EXISTS idx_pigeon_messages_timestamp ON pigeon_messages(timestamp DESC);
+        CREATE VIRTUAL TABLE IF NOT EXISTS pigeon_messages_fts USING fts5(message);",
         None,
       )
-      .expect("created messages table");
+      .expect("created pigeon_messages table");
 
     Pigeons { sql, state, env }
   }
 
   async fn fetch(&self, req: Request) -> Result<Response> {
     match req.path().as_str() {
-      "/pigeons/create" => create(self, req).await,
-      "/pigeons/read_all" => read_all(self, req).await,
-      "/pigeons/read" => read(self, req).await,
+      "/pigeons/list" => list(self, req).await,
+      "/pigeons/get" => get(self, req).await,
+      "/pigeons/create/" => create(self, req).await,
       "/pigeons/update" => update(self, req).await,
       "/pigeons/delete" => delete(self, req).await,
-      "/pigeon/:id/messages" => read_messages(self, req).await,
-      "/pigeon/:id/message/:id" => read_messages(self, req).await,
+      "/pigeon_messages/list" => list_pigeon_messages(self, req).await,
+      "/pigeon_messages/get" => get_pigeon_messages(self, req).await,
+      "/pigeon_messages/create" => create_pigeon_messages(self, req).await,
       _ => Response::error("Not found", 404),
     }
   }
 }
 
-async fn read_all(pigeons: &Pigeons, _req: Request) -> Result<Response> {
-  let query = pigeons
-    .sql
-    .exec("SELECT * FROM pigeons;", None)?
-    .to_array::<Pigeon>();
+async fn list(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
+  match req.text().await {
+    Ok(flock_id) => {
+      let query: std::result::Result<Vec<Pigeon>, worker::Error> = pigeons
+        .sql
+        .exec(
+          "SELECT
+          pigeons.*,
+          COUNT(pigeon_messages.id) AS pigeon_count
+        FROM
+          pigeons
+        LEFT JOIN
+          pigeon_messages ON pigeons.id = pigeon_messages.pigeon_id
+        WHERE
+          pigeons.flock_id = ?
+        GROUP BY
+          pigeons.id;",
+          vec![flock_id.into()],
+        )?
+        .to_array::<Pigeon>();
 
-  match query {
-    Ok(rows) => Response::from_json(&rows),
+      match query {
+        Ok(rows) => Response::from_json(&rows),
+        Err(e) => {
+          console_error!("Pigeons READ error: {e}");
+          Response::error("Internal Server Error", 500)
+        }
+      }
+    }
     Err(e) => {
-      console_error!("Pigeons read error: {e}");
-      Response::error("Internal Server Error", 500)
+      console_error!("Pigeons READ error: {e}");
+      Response::error("Bad Request", 400)
     }
   }
 }
 
-async fn read(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
-  match req.json::<Pigeon>().await {
-    Ok(row) => {
+async fn get(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
+  match req.text().await {
+    Ok(pigeon_id) => {
       let query = pigeons
         .sql
-        .exec("SELECT * FROM pigeons WHERE id = ?;", vec![row.id.into()])?
+        .exec(
+          "SELECT * FROM pigeons WHERE id = ?;",
+          vec![pigeon_id.into()],
+        )?
         .one::<Pigeon>();
 
       match query {
@@ -157,7 +152,7 @@ async fn read(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
       }
     }
     Err(e) => {
-      console_error!("Pigeons read error: {e}");
+      console_error!("Pigeons READ error: {e}");
       Response::error("Bad Request", 400)
     }
   }
@@ -170,6 +165,7 @@ async fn create(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
         .sql
         .exec(
           "INSERT INTO pigeons (
+            flock_id,
             serial,
             name,
             tags,
@@ -177,8 +173,9 @@ async fn create(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
             location,
             last_connected
           )
-          VALUES (?);",
+          VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *;",
           vec![
+            row.flock_id.into(),
             row.serial.into(),
             row.name.into(),
             row.tags.into(),
@@ -210,7 +207,7 @@ async fn create(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
       }
     }
     Err(e) => {
-      console_error!("Pigeons read error: {e}");
+      console_error!("Pigeons CREATE error: {e}");
       Response::error("Bad Request", 400)
     }
   }
@@ -219,30 +216,43 @@ async fn create(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
 async fn update(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
   match req.json::<Pigeon>().await {
     Ok(row) => {
-      pigeons.sql.exec(
-        "UPDATE pigeons SET
+      let query = pigeons
+        .sql
+        .exec(
+          "UPDATE pigeons SET
           serial=?,
           name=?,
           tags=?,
           connector=?,
           location=?,
           last_connected=?
-          WHERE id = ?;",
-        vec![
-          row.serial.into(),
-          row.name.into(),
-          row.tags.into(),
-          row.connector.into(),
-          row.location.into(),
-          row.last_connected.into(),
-          row.id.into(),
-        ],
-      )?;
+          WHERE id = ?
+          RETURNING *;",
+          vec![
+            row.serial.into(),
+            row.name.into(),
+            row.tags.into(),
+            row.connector.into(),
+            row.location.into(),
+            row.last_connected.into(),
+            row.id.into(),
+          ],
+        )?
+        .one::<Pigeon>();
 
-      Response::empty()
+      match query {
+        Ok(pigeon) => Response::from_json(&pigeon),
+        Err(e) => {
+          console_error!(
+            "Pigeons create error: {e}\nRequest body: {:?}",
+            req.text().await?
+          );
+          Response::error("Internal Server Error", 500)
+        }
+      }
     }
     Err(e) => {
-      console_error!("Pigeons read error: {e}");
+      console_error!("Pigeons UPDATE error: {e}");
       Response::error("Bad Request", 400)
     }
   }
@@ -258,29 +268,101 @@ async fn delete(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
       Response::empty()
     }
     Err(e) => {
-      console_error!("Pigeons read error: {e}");
+      console_error!("Pigeons DELETE error: {e}");
       Response::error("Bad Request", 400)
     }
   }
 }
 
-async fn read_messages(pigeons: &Pigeons, _req: Request) -> Result<Response> {
-  let query = pigeons
-    .sql
-    .exec("SELECT * FROM pigeons;", None)?
-    .to_array::<Vec<Pigeon>>();
+async fn list_pigeon_messages(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
+  match req.json::<Pigeon>().await {
+    Ok(row) => {
+      let query: std::result::Result<Vec<PigeonMessage>, worker::Error> = pigeons
+        .sql
+        .exec(
+          "SELECT * FROM pigeon_messages WHERE pigeon_id = ?;",
+          vec![row.id.into()],
+        )?
+        .to_array::<PigeonMessage>();
 
-  match query {
-    Ok(rows) => match serde_json::to_string(&rows) {
-      Ok(json) => Response::from_json(&json),
-      Err(e) => {
-        console_error!("Pigeon serialize error: {e}");
-        Response::error("Internal Server Error", 500)
+      match query {
+        Ok(rows) => Response::from_json(&rows),
+        Err(e) => {
+          console_error!("PigeonMessages READ error: {e}");
+          Response::error("Internal Server Error", 500)
+        }
       }
-    },
+    }
     Err(e) => {
-      console_error!("Pigeons read error: {e}");
-      Response::error("Internal Server Error", 500)
+      console_error!("PigeonMessages READ error: {e}");
+      Response::error("Bad Request", 400)
+    }
+  }
+}
+
+async fn get_pigeon_messages(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
+  match req.json::<PigeonMessage>().await {
+    Ok(row) => {
+      let query = pigeons
+        .sql
+        .exec(
+          "SELECT * FROM pigeon_messages WHERE id = ?;",
+          vec![row.id.into()],
+        )?
+        .one::<PigeonMessage>();
+
+      match query {
+        Ok(pigeon_message) => Response::from_json(&pigeon_message),
+        Err(e) => {
+          console_error!(
+            "PigeonMessages read error: {e}\nRequest body: {:?}",
+            req.text().await?
+          );
+          Response::error("Internal Server Error", 500)
+        }
+      }
+    }
+    Err(e) => {
+      console_error!("PigeonMessages READ error: {e}");
+      Response::error("Bad Request", 400)
+    }
+  }
+}
+
+async fn create_pigeon_messages(pigeons: &Pigeons, mut req: Request) -> Result<Response> {
+  match req.json::<PigeonMessage>().await {
+    Ok(row) => {
+      let query = pigeons
+        .sql
+        .exec(
+          "INSERT INTO pigeon_messages (pigeon_id, message) VALUES (?, ?) RETURNING *;",
+          vec![row.pigeon_id.into(), row.message.into()],
+        )?
+        .one::<PigeonMessage>();
+
+      match query {
+        Ok(pigeon_message) => {
+          let mut location = String::with_capacity(72);
+          location.push_str("/pigeon_messages/");
+          location.push_str(&pigeon_message.id.to_string());
+
+          ResponseBuilder::new()
+            .with_status(201)
+            .with_header("Location", &location)?
+            .from_json(&pigeon_message)
+        }
+        Err(e) => {
+          console_error!(
+            "PigeonMessages create error: {e}\nRequest body: {:?}",
+            req.text().await?
+          );
+          Response::error("Internal Server Error", 500)
+        }
+      }
+    }
+    Err(e) => {
+      console_error!("PigeonMessages CREATE error: {e}");
+      Response::error("Bad Request", 400)
     }
   }
 }

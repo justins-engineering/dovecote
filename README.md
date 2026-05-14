@@ -1,5 +1,5 @@
 # Dovecote
-The home for our pigeons. The main app for managing PigIoT. User/device authentication, data management, and API router. Primarily designed to be run as a Cloudflare worker.
+The home for our pigeons. The main app for managing PidgeIoT. User/device authentication, data management, and API router. Primarily designed to be run as a Cloudflare worker.
 
 ## Development
 
